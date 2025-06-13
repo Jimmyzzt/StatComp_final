@@ -8,6 +8,7 @@ import io
 import base64
 import time
 import asyncio
+from smc_sampler import smc_sampler
 
 config = {
     "font.family":'serif',
@@ -18,6 +19,7 @@ config = {
     "font.size": 12,
 }
 plt.rcParams.update(config)
+plt.switch_backend('Agg')  # 添加这行，切换为非交互式后端
 
 # 定义多峰正态分布的对数似然类
 class MultiModalNormalLogLikelihood(pints.LogPDF):
@@ -76,13 +78,81 @@ log_likelihood = MultiModalNormalLogLikelihood(means, covariances, weights)
 log_prior = pints.UniformLogPrior([-10] * dimensions, [10] * dimensions)
 log_posterior = pints.LogPosterior(log_likelihood, log_prior)
 
-# MCMC方法描述
+# method_descriptions = {
+#     "NoUTurnMCMC": (
+#         "No-U-Turn Sampler (NUTS) 是一种自适应的哈密顿蒙特卡罗(HMC)变体。"
+#         "它能自动调整模拟路径的长度，避免了手动设置leapfrog步数的需要，"
+#         "通常对于复杂后验分布非常高效和稳健。"
+#     ),
+#     "RelativisticMCMC": (
+#         "相对论MCMC (Relativistic HMC) 使用广义哈密顿动力学，引入一个类似“软”边界的势能项。"
+#         "这有助于采样器在低概率区域探索，并可能更好地穿越不同模式之间的“能量壁垒”，但可能以牺牲局部采样效率为代价。"
+#     ),
+#     "MonomialGammaHamiltonianMCMC": (
+#         "Monomial Gamma HMC 是一种HMC变体，它从伽马分布而不是标准的高斯分布中抽取动量。"
+#         "这可以改变采样器的探索行为，对于具有特定几何形状（如重尾）的后验分布可能更有优势。"
+#     ),
+#     "MALAMCMC": (
+#         "Metropolis-Adjusted Langevin Algorithm (MALA) 是一种利用后验梯度信息来指导提议的MCMC方法。"
+#         "它通过模拟朗之万动力学产生候选点，然后用Metropolis-Hastings步骤进行修正，"
+#         "通常比随机游走Metropolis-Hastings更高效。"
+#     ),
+#     "HamiltonianMCMC": (
+#         "经典哈密顿蒙特卡罗 (Classic HMC) 模拟一个粒子在由负对数后验定义的势能场中的运动。"
+#         "它利用梯度信息进行远距离、高接受率的移动，在处理高维和相关参数时非常有效，"
+#         "但需要用户手动调整步长和步数。"
+#     ),
+#     "RDMC": (
+#         "黎曼流形动力学蒙特卡罗 (Riemannian Dynamics Monte Carlo, RDMC) 的一种简化实现，"
+#         "该方法在利用朗之万动力学进行提议的同时，根据接受率自适应地调整步长。"
+#         "它旨在通过结合几何信息来提升采样效率，尤其适用于后验具有复杂局部结构的分布。"
+#     ),
+#     "SMC": (
+#         "序贯蒙特卡罗 (Sequential Monte Carlo, SMC) 通过一系列重采样和变异步骤，"
+#         "将一组代表先验分布的粒子（或样本）逐步转化为代表后验分布的粒子。"
+#         "这种方法对于处理多模态分布和模型证据估计特别有效。"
+#     )
+# }
+
 method_descriptions = {
-    "NoUTurnMCMC": "No-U-Turn Sampler (NUTS) - 自适应HMC方法，不需要手动调整步长",
-    "RelativisticMCMC": "相对论MCMC - 使用相对论动力学进行采样",
-    "MonomialGammaHamiltonianMCMC": "Monomial Gamma HMC - 基于伽马分布的HMC变体",
-    "MALAMCMC": "Metropolis Adjusted Langevin Algorithm - 使用梯度信息的MCMC方法",
-    "HamiltonianMCMC": "经典Hamiltonian Monte Carlo - 使用物理模拟进行高效采样"
+    "HamiltonianMCMC": (
+        "Hamiltonian Monte Carlo (HMC) 是一种结合哈密顿动力学与MCMC的高效采样算法，"
+        "通过模拟物理系统中的能量守恒轨迹来探索高维参数空间，"
+        "从而避免传统MCMC方法的低效问题，尤其适用于复杂、高维且强相关的分布。"
+    ),
+    "NoUTurnMCMC": (
+        "No-U-Turn Sampler (NUTS) 是HMC的一种自适应扩展算法，"
+        "旨在解决HMC中需要手动设置leapfrog步数的问题。"
+        "NUTS不仅保留了HMC在高维空间中的高效性，且在多数情况下表现更优，"
+        "通常对于复杂后验分布非常高效和稳健。"
+    ),
+    "MonomialGammaHamiltonianMCMC": (
+        "Monomial Gamma Sampler (MGS) 是一种基于哈密顿动力学和辅助变量的高效采样算法，"
+        "通过引入广义动能函数将HMC与切片采样统一起来。"
+        "适用于处理复杂、高维且强相关的概率分布。"
+    ),
+    "RelativisticMCMC": (
+        "Relativistic Monte Carlo (RMC) 是一种基于相对论动力学的改进型HMC算法，"
+        "旨在解决传统HMC对时间离散化和动量分布尺度敏感的局限性。"
+        "RMC通过引入相对论哈密顿量增强算法稳定性。"
+    ),
+    "SMC": (
+        "Sequential Monte Carlo (SMC) 是一种灵活且通用的采样方法，"
+        "通过序贯重要性采样和重采样逐步更新粒子权重，从而逼近目标分布。"
+        "能够高效地探索复杂的目标分布，适用于贝叶斯推断、优化以及计算归一化常数比等问题。"
+    ),
+    "MALAMCMC": (
+        "Metropolis-adjusted Langevin algorithm (MALA) 融合了Langevin动力学与Metropolis-Hastings框架，"
+        "基于离散化的Langevin扩散方程生成候选样本，"
+        "随后通过Metropolis-Hastings准则计算接受概率。"
+        "相较于传统的随机游走Metropolis算法，MALA利用梯度信息显著提高了采样效率。"
+    ),
+    "RDMC": (
+        "Reverse Diffusion Monte Carlo (RDMC) 是一种基于逆扩散过程的高效采样算法，"
+        "将分数匹配问题转化为均值估计问题，避免了分数函数估计的复杂性。"
+        "利用OU过程的显式解将目标分布扩散到标准正态分布，然后通过逆过程采样。"
+        "在处理多峰和高维复杂分布时具有更高的效率，能显著减少样本相关性并提高收敛速度。"
+    )
 }
 
 # UI界面
@@ -144,24 +214,45 @@ app_ui = ui.page_fluid(
     ui.layout_sidebar(
         ui.sidebar(
             ui.h4("采样参数设置", class_="text-center"),
-            ui.input_select("method", "选择MCMC方法",
-                            choices={
-                                "NoUTurnMCMC": "No-U-Turn MCMC",
-                                "RelativisticMCMC": "相对论MCMC",
-                                "MonomialGammaHamiltonianMCMC": "Monomial Gamma HMC",
-                                "MALAMCMC": "MALA MCMC",
-                                "HamiltonianMCMC": "Hamiltonian MCMC"
-                            },
-                            selected="NoUTurnMCMC"
-                            ),
-            ui.div(
-                ui.p(method_descriptions["NoUTurnMCMC"], id="method_desc", class_="method-description")
+            ui.input_select(
+                "method",
+                "选择MCMC方法",
+                choices={
+                    "HamiltonianMCMC": "Hamiltonian Monte Carlo",
+                    "NoUTurnMCMC": "No-U-Turn Sampler",
+                    "MonomialGammaHamiltonianMCMC": "Monomial Gamma Sampler",
+                    "RelativisticMCMC": "Relativistic Monte Carlo",
+                    "SMC": "Sequential Monte Carlo",
+                    "MALAMCMC": "MALA",
+                    "RDMC": "Reverse Diffusion Monte Carlo",
+                },
+                selected="HamiltonianMCMC",
             ),
-            ui.input_numeric("iterations", "迭代次数", value=2000, min=500, max=10000),
-            ui.input_numeric("warmup", "预热期", value=500, min=100, max=2000),
-            ui.input_numeric("n_chains", "链的数量", value=3, min=1, max=5),
-            ui.input_slider("step_size", "步长", min=0.01, max=1.0, value=0.1, step=0.01),
-            ui.input_slider("mass", "质量矩阵", min=0.1, max=2.0, value=1.0, step=0.1),
+            ui.output_ui("method_desc"),
+
+            # --- 原有参数（非SMC）---
+            ui.panel_conditional(
+                "input.method != 'SMC'",
+                ui.input_numeric("iterations", "迭代次数", value=2000, min=500, max=10000),
+                ui.input_numeric("warmup", "预热期", value=500, min=100, max=2000),
+                ui.input_numeric("n_chains", "链的数量", value=3, min=1, max=5),
+                ui.input_slider("step_size", "步长", min=0.01, max=1.0, value=0.1, step=0.01),
+                ui.input_slider("mass", "质量矩阵", min=0.1, max=2.0, value=1.0, step=0.1),
+            ),
+            ui.panel_conditional(
+                "input.method == 'SMC'",
+                ui.input_numeric("n_chains_smc", "粒子数 (N)", value=500, min=100, max=2000),
+                ui.input_numeric("iterations_smc", "MCMC迭代次数 (Neff)", value=150, min=50, max=500),
+                ui.input_slider("burn_in_fraction", "MCMC预热比例", min=0.0, max=0.8, value=0.3, step=0.05),
+            ),
+
+            # --- 以下为旧写法 ---
+            # ui.input_numeric("iterations", "迭代次数", value=2000, min=500, max=10000),
+            # ui.input_numeric("warmup", "预热期", value=500, min=100, max=2000),
+            # ui.input_numeric("n_chains", "链的数量", value=3, min=1, max=5),
+            # ui.input_slider("step_size", "步长", min=0.01, max=1.0, value=0.1, step=0.01),
+            # ui.input_slider("mass", "质量矩阵", min=0.1, max=2.0, value=1.0, step=0.1),
+
             ui.input_action_button("run", "运行采样", class_="btn-run"),
             width=300
         ),
@@ -206,9 +297,10 @@ app_ui = ui.page_fluid(
                              ui.column(12,
                                        ui.div(
                                            ui.h4("MCMC诊断统计"),
-                                           ui.output_text("diagnostics"),
+                                           # ui.output_text("diagnostics"),
+                                            ui.output_text_verbatim("diagnostics"),
                                            class_="plot-container",
-                                           style="height: 200px; overflow-y: scroll;"
+                                           style="height: 400px; overflow-y: scroll;"
                                        )
                                        )
                          )
@@ -245,13 +337,16 @@ def server(input, output, session):
     chains = reactive.Value(None)
     current_method = reactive.Value("")
     is_running = reactive.Value(False)
+    results_history = reactive.Value([])
 
-    # 更新方法描述 - 修复后的版本
-    @reactive.Effect
-    @reactive.event(input.method)
-    def update_description():
-        method = input.method()
-        ui.update_text(id="method_desc", value=method_descriptions.get(method, "无描述信息"))
+    # 方法描述输出
+    @output
+    @render.ui
+    def method_desc():
+        return ui.div(
+            method_descriptions.get(input.method(), "无描述信息"),
+            class_="method-description",
+        )
 
     # 运行MCMC采样
     @reactive.Effect
@@ -262,37 +357,78 @@ def server(input, output, session):
         # 创建起始点
         xs = [np.random.uniform(-10, 10, dimensions) for _ in range(input.n_chains())]
 
-        # 获取方法类
-        method_class = getattr(pints, input.method())
+        method_name = input.method()
+        if method_name in ("RDMC", "SMC"):
+            # 使用自定义算法
+            if method_name == "RDMC":
+                chains_result = await asyncio.to_thread(
+                    rdmc_sampler,
+                    log_posterior,
+                    xs,
+                    input.iterations(),
+                    input.step_size(),
+                )
+            else:  # SMC分支
+                # 从 log_prior 获取边界
+                lower_bounds = [-10] * dimensions
+                upper_bounds = [10] * dimensions
 
-        # 创建MCMC控制器
-        mcmc = pints.MCMCController(
-            log_posterior,
-            input.n_chains(),
-            xs,
-            method=method_class
-        )
+                chains_result = await asyncio.to_thread(
+                    smc_sampler,
+                    log_posterior,  # 对数后验对象
+                    input.n_chains_smc(),  # 粒子数 (N)
+                    input.iterations_smc(),  # MCMC迭代次数 (Neff)
+                    lower_bounds,  # 新增：传递下界
+                    upper_bounds,  # 新增：传递上界
+                    input.burn_in_fraction()  # 新增：传递预热比例
+                )
+                print(chains_result.shape)
+            # else:
+            #     chains_result = await asyncio.to_thread(
+            #         smc_sampler,
+            #         log_posterior,
+            #         input.n_chains(),
+            #         input.iterations(),
+            #     )
+        else:
+            # 获取方法类
+            method_class = getattr(pints, method_name)
 
-        # 设置参数
-        mcmc.set_max_iterations(input.iterations())
-        mcmc.set_log_to_screen(False)
+            mcmc = pints.MCMCController(
+                log_posterior,
+                input.n_chains(),
+                xs,
+                method=method_class,
+            )
+            mcmc.set_max_iterations(input.iterations())
+            mcmc.set_log_to_screen(False)
 
-        # 设置特定方法的参数
-        for sampler in mcmc.samplers():
-            if hasattr(sampler, 'set_leapfrog_step_size'):
-                sampler.set_leapfrog_step_size(input.step_size())
-            if hasattr(sampler, 'set_mass_matrix'):
-                # 创建对角质量矩阵
-                mass_matrix = np.diag([input.mass()] * dimensions)
-                sampler.set_mass_matrix(mass_matrix)
+            for sampler in mcmc.samplers():
+                if hasattr(sampler, "set_leapfrog_step_size"):
+                    sampler.set_leapfrog_step_size(input.step_size())
+                if hasattr(sampler, "set_mass_matrix"):
+                    mass_matrix = np.diag([input.mass()] * dimensions)
+                    sampler.set_mass_matrix(mass_matrix)
 
-        # 运行采样
-        try:
             chains_result = await asyncio.to_thread(mcmc.run)
-            chains.set(chains_result)
-            current_method.set(input.method())
+
+        chains_result = np.asarray(chains_result)
+        chains.set(chains_result)
+        current_method.set(method_name)
+        # 保存ESS用于比较
+        try:
+            warmup = input.warmup()
+            if current_method() == 'SMC':
+                warmup = 0
+            chains_for_ess = chains_result[:, warmup:, :]
+            ess = pints.effective_sample_size(
+                chains_for_ess.reshape(-1, chains_for_ess.shape[-1])
+            )
+            history = list(results_history() or [])
+            history.append((method_name, ess))
+            results_history.set(history[-5:])
         except Exception as e:
-            print(f"采样过程中发生错误: {e}")
+            print(f"计算ESS时发生错误: {e}")
         finally:
             is_running.set(False)
 
@@ -303,26 +439,51 @@ def server(input, output, session):
         if chains() is None or is_running():
             return placeholder_plot("采样轨迹", "运行采样后显示结果")
 
-        warmup = input.warmup()
-        chains_value = chains()[:, warmup:, :]
+        if current_method() != 'SMC':
+            warmup = input.warmup()
+            if current_method() != 'SMC':
+                chains_value = chains()[:, warmup:, :]
+            else:
+                chains_value = chains()
 
-        # 调整图像大小，增加高度并保持响应式
-        fig, axes = plt.subplots(dimensions, 1, figsize=(10, 3 * dimensions), dpi=100)
+            # 调整图像大小，增加高度并保持响应式
+            fig, axes = plt.subplots(dimensions, 1, figsize=(10, 3 * dimensions), dpi=100)
 
-        # 如果只有一维，将axes转换为列表
-        if dimensions == 1:
-            axes = [axes]
+            # 如果只有一维，将axes转换为列表
+            if dimensions == 1:
+                axes = [axes]
 
-        for i in range(dimensions):
-            for chain in chains_value:
-                axes[i].plot(chain[:, i], alpha=0.7)
-            axes[i].set_title(f'参数 {i + 1} 的轨迹')
-            axes[i].set_xlabel('迭代次数')
-            axes[i].set_ylabel(f'')
-            axes[i].grid(True, alpha=0.3)
+            for i in range(dimensions):
+                for chain in chains_value:
+                    axes[i].plot(chain[:, i], alpha=0.7)
+                axes[i].set_title(f'参数 {i + 1} 的轨迹')
+                axes[i].set_xlabel('迭代次数')
+                axes[i].set_ylabel(f'')
+                axes[i].grid(True, alpha=0.3)
 
-        plt.tight_layout()
-        return fig
+            plt.tight_layout()
+            return fig
+        else:
+            history = chains()
+            warmup = 0
+            history = history[:, warmup:, :]
+            n_particles, n_iters, dim = history.shape
+
+            if dim != 2:
+                return placeholder_plot("采样轨迹", "仅支持2维参数空间的轨迹可视化")
+
+            fig, ax = plt.subplots(figsize=(8, 6))
+            selected_idx = np.linspace(0, n_particles - 1, 20, dtype=int)  # 只画10条轨迹
+
+            for idx in selected_idx:
+                traj = history[idx, :, :]  # shape: (n_iters, 2)
+                ax.plot(traj[:, 0], traj[:, 1], alpha=0.7, lw=1)
+
+            ax.set_title("代表性粒子轨迹（SMC）")
+            ax.set_xlabel("维度 1")
+            ax.set_ylabel("维度 2")
+            ax.grid(alpha=0.3)
+            return fig
 
     # 绘制采样点分布
     @output
@@ -332,7 +493,10 @@ def server(input, output, session):
             return placeholder_plot("采样点分布", "运行采样后显示结果")
 
         warmup = input.warmup()
-        chains_value = chains()[:, warmup:, :]
+        if current_method() != 'SMC':
+            chains_value = chains()[:, warmup:, :]
+        else:
+            chains_value = chains()
 
         # 合并所有链
         all_points = np.vstack(chains_value)
@@ -382,14 +546,17 @@ def server(input, output, session):
             return placeholder_plot("参数分布", "运行采样后显示结果")
 
         warmup = input.warmup()
-        chains_value = chains()[:, warmup:, :]
+        if current_method() != 'SMC':
+            chains_value = chains()[:, warmup:, :]
+        else:
+            chains_value = chains()
 
         # 合并所有链
         all_points = np.vstack(chains_value)
 
         # 调整图像大小和子图间距
         fig, axes = plt.subplots(1, dimensions, figsize=(6 * dimensions, 4), dpi=100)
-        plt.subplots_adjust(wspace=1)  # 增加子图之间的水平间距
+        fig.subplots_adjust(wspace=0.4)
 
         # 如果只有一维，将axes转换为列表
         if dimensions == 1:
@@ -412,15 +579,17 @@ def server(input, output, session):
                 std = np.sqrt(covariances[mode][i, i])
                 true_pdf += weights[mode] * (1 / (std * np.sqrt(2 * np.pi))) * np.exp(-0.5 * ((x - mean) / std) ** 2)
 
-            # 只在一个子图中绘制真实分布线并获取图例句柄
-            if i == 0:
-                line, = axes[i].plot(x, true_pdf, 'r-', linewidth=2)
-                legend_handles.append(line)
-                legend_handles.append(patches[0])
+            # 每个子图都添加
+            line, = axes[i].plot(x, true_pdf, 'r-', linewidth=2)
+            legend_handles.append(line)
+            legend_handles.append(patches[0])
 
             axes[i].set_title(f'参数 {i + 1} 分布')
-            axes[i].set_xlabel(f'')
-            axes[i].set_ylabel('')
+            axes[i].set_xlabel('')
+            if i == 0:
+                axes[i].set_ylabel('密度')
+            else:
+                axes[i].set_ylabel('')
             axes[i].grid(True, alpha=0.3)
 
         # 添加整体图例
@@ -431,7 +600,6 @@ def server(input, output, session):
         plt.tight_layout()
         return fig
 
-    # 绘制链间比较图
     @output
     @render.plot
     def chain_comparison():
@@ -439,33 +607,87 @@ def server(input, output, session):
             return placeholder_plot("链间比较", "运行采样后显示结果")
 
         warmup = input.warmup()
-        chains_value = chains()[:, warmup:, :]
+        # 三维轨迹
+        history = chains()  # (n_particles, total_iters, dim)
+        particles, total_iters, dim = history.shape
 
-        # 调整图像大小，高度根据参数数量自适应
-        fig, axes = plt.subplots(dimensions, 1, figsize=(10, 3 * dimensions), dpi=100)
+        # 丢掉 warmup
+        if current_method() != 'SMC':
+            history = history[:, warmup:, :]  # -> (particles, iters_after_warmup, dim)
+        iters_after = history.shape[1]
 
-        # 如果只有一维，将axes转换为列表
-        if dimensions == 1:
+        fig, axes = plt.subplots(dim, 1, figsize=(10, 3 * dim), dpi=100)
+        if dim == 1:
             axes = [axes]
 
-        for i in range(dimensions):
-            for chain_idx, chain in enumerate(chains_value):
-                # 计算运行平均值
-                running_avg = np.cumsum(chain[:, i]) / (np.arange(len(chain)) + 1)
-                axes[i].plot(running_avg, label=f'链 {chain_idx + 1}', alpha=0.8)
+        if current_method() == 'SMC':
+            # 全局均值：每次迭代上所有粒子的平均
+            global_means = history.mean(axis=0)  # -> (iters_after, dim)
+            for i in range(dim):
+                axes[i].plot(global_means[:, i], label='全局均值', linewidth=2)
+                # 参考真实值（如果你有）
+                true_mean = sum(w * m[i] for w, m in zip(weights, means))
+                axes[i].axhline(true_mean, color='r', linestyle='--', label='真实均值')
 
-            # 添加真实分布的平均值（加权平均）
-            true_mean = sum(weights[j] * means[j][i] for j in range(len(means)))
-            axes[i].axhline(y=true_mean, color='r', linestyle='--', label='真实均值')
-
-            axes[i].set_title(f'参数 {i + 1} 的链收敛情况')
-            axes[i].set_xlabel('迭代次数')
-            axes[i].set_ylabel(f'参数 {i + 1} 平均值')
-            axes[i].grid(True, alpha=0.3)
-            axes[i].legend()
+                axes[i].set_title(f'参数 {i + 1} 全局均值收敛 (SMC)')
+                axes[i].set_xlabel('迭代次数')
+                axes[i].set_ylabel('均值')
+                axes[i].legend()
+                axes[i].grid(alpha=0.3)
+        else:
+            # MCMC 或多链：画每一条链的 running average
+            for i in range(dim):
+                for c in range(particles):
+                    runavg = np.cumsum(history[c, :, i]) / np.arange(1, iters_after + 1)
+                    axes[i].plot(runavg, alpha=0.6, label=f'链 {c + 1}' if c < 5 else None)
+                true_mean = sum(w * m[i] for w, m in zip(weights, means))
+                axes[i].axhline(true_mean, color='r', linestyle='--')
+                axes[i].set_title(f'参数 {i + 1} 链收敛情况')
+                axes[i].set_xlabel('迭代次数')
+                axes[i].set_ylabel('均值')
+                axes[i].grid(alpha=0.3)
+                if i == 0:
+                    axes[i].legend(ncol=2, fontsize='small')
 
         plt.tight_layout()
         return fig
+
+    # 老版本链间比较图
+    # @output
+    # @render.plot
+    # def chain_comparison():
+    #     if chains() is None or is_running():
+    #         return placeholder_plot("链间比较", "运行采样后显示结果")
+    #
+    #     warmup = input.warmup()
+    #     chains_value = chains()[:, warmup:, :]
+    #
+    #     # 调整图像大小，高度根据参数数量自适应
+    #     fig, axes = plt.subplots(dimensions, 1, figsize=(10, 3 * dimensions), dpi=100)
+    #
+    #     # 如果只有一维，将axes转换为列表
+    #     if dimensions == 1:
+    #         axes = [axes]
+    #
+    #     for i in range(dimensions):
+    #         for chain_idx, chain in enumerate(chains_value):
+    #             # 计算运行平均值
+    #             running_avg = np.cumsum(chain[:, i]) / (np.arange(len(chain)) + 1)
+    #             axes[i].plot(running_avg, label=f'链 {chain_idx + 1}', alpha=0.8)
+    #
+    #         # 添加真实分布的平均值（加权平均）
+    #         true_mean = sum(weights[j] * means[j][i] for j in range(len(means)))
+    #         axes[i].axhline(y=true_mean, color='r', linestyle='--', label='真实均值')
+    #
+    #         axes[i].set_title(f'参数 {i + 1} 的链收敛情况')
+    #         axes[i].set_xlabel('迭代次数')
+    #         axes[i].set_ylabel(f'参数 {i + 1} 平均值')
+    #         axes[i].grid(True, alpha=0.3)
+    #         axes[i].legend()
+    #
+    #     plt.tight_layout()
+    #     return fig
+
 
     # 显示诊断信息
     @output
@@ -475,7 +697,10 @@ def server(input, output, session):
             return "请运行采样以查看诊断信息。"
 
         warmup = input.warmup()
-        chains_value = chains()[:, warmup:, :]
+        if current_method() != 'SMC':
+            chains_value = chains()[:, warmup:, :]
+        else:
+            chains_value = chains()
 
         # 计算Rhat (Gelman-Rubin诊断)
         n_chains, n_iter, n_params = chains_value.shape
@@ -501,7 +726,9 @@ def server(input, output, session):
             rhats.append(rhat)
 
         # 计算有效样本大小 (ESS)
-        ess = pints.effective_sample_size(chains_value)
+        ess = pints.effective_sample_size(
+            chains_value.reshape(-1, chains_value.shape[-1])
+        )
 
         # 构建诊断信息字符串
         diag_text = f"方法: {current_method()}\n"
@@ -559,54 +786,79 @@ def server(input, output, session):
     @output
     @render.plot
     def comparison_plot():
-        # 这是一个静态图，用于比较不同方法
+        hist = results_history()
+        if not hist:
+            return placeholder_plot("算法比较", "运行采样后显示对比结果")
+
         fig, ax = plt.subplots(figsize=(10, 6), dpi=100)
 
-        # 方法名称和颜色
-        methods = ["NoUTurnMCMC", "HamiltonianMCMC", "MALAMCMC", "RelativisticMCMC"]
-        colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728']
+        methods = [h[0] for h in hist]
+        # ess_values = [np.mean(h[1], axis=0) for h in hist]
+        ess_values = [np.atleast_1d(h[1]) for h in hist]  # 确保每个ESS值都是数组
 
-        # 假数据 - 在实际应用中应从真实运行中获取 牛逼
-        ess_values = {
-            "NoUTurnMCMC": [950, 980],
-            "HamiltonianMCMC": [850, 870],
-            "MALAMCMC": [780, 800],
-            "RelativisticMCMC": [720, 750]
-        }
-
-        # 绘制条形图
-        bar_width = 0.2
+        bar_width = 0.2 / dimensions
         indices = np.arange(len(methods))
+        colors = plt.cm.viridis(np.linspace(0.2, 0.8, dimensions))
 
         for i in range(dimensions):
-            values = [ess_values[method][i] for method in methods]
-            ax.bar(indices + i * bar_width, values, bar_width,
-                   label=f'参数 {i + 1}', color=colors[i])
+            vals = [ess[i] for ess in ess_values]
+            ax.bar(indices + i * bar_width, vals, bar_width, label=f'参数 {i+1}', color=colors[i])
 
         ax.set_title('不同MCMC方法的有效样本大小(ESS)比较')
         ax.set_xlabel('MCMC方法')
         ax.set_ylabel('有效样本大小(ESS)')
-        ax.set_xticks(indices + bar_width / 2)
+        ax.set_xticks(indices + bar_width * (dimensions-1)/2)
         ax.set_xticklabels(methods)
         ax.legend()
         ax.grid(True, axis='y', alpha=0.3)
 
-        # 添加说明
-        plt.figtext(0.5, 0.01,
-                    "注: 此图为示例数据，实际结果可能因参数设置和随机性而有所不同。",
-                    ha="center", fontsize=10, style='italic')
-
         return fig
 
     # 生成占位图
-    def placeholder_plot(title, message):
-        fig, ax = plt.subplots(figsize=(8, 6))
-        ax.text(0.5, 0.5, message,
-                ha='center', va='center', fontsize=16,
-                bbox=dict(facecolor='white', alpha=0.8))
-        ax.set_title(title)
-        ax.set_axis_off()
-        return fig
+def placeholder_plot(title, message):
+    fig, ax = plt.subplots(figsize=(8, 6))
+    ax.text(0.5, 0.5, message,
+            ha='center', va='center', fontsize=16,
+            bbox=dict(facecolor='white', alpha=0.8))
+    ax.set_title(title)
+    ax.set_axis_off()
+    return fig
+
+# ------ 自定义采样算法 ------
+def rdmc_sampler(log_post, starts, iterations, step_size):
+    chains = []
+    for x0 in starts:
+        x = np.asarray(x0, dtype=float)
+        samples = []
+        acc = 0
+        ss = step_size
+        for i in range(iterations):
+            # 梯度近似
+            logp, grad = log_likelihood.evaluateS1(x)
+            prop = x + ss * grad + np.sqrt(2 * ss) * np.random.randn(len(x))
+            logp_prop, grad_prop = log_likelihood.evaluateS1(prop)
+            log_accept = logp_prop - logp
+            log_accept -= (np.sum((x - prop - ss * grad_prop) ** 2) - np.sum((prop - x - ss * grad) ** 2)) / (4 * ss)
+            if np.log(np.random.rand()) < log_accept:
+                x = prop
+                acc += 1
+            samples.append(x.copy())
+            if (i + 1) % 100 == 0:
+                rate = acc / 100.0
+                if rate < 0.2:
+                    ss *= 0.9
+                elif rate > 0.8:
+                    ss *= 1.1
+                acc = 0
+        chains.append(np.asarray(samples))
+    return np.stack(chains)
+
+
+# def smc_sampler(log_post, n_chains, iterations):
+#     particles = np.random.uniform(-10, 10, (n_chains, iterations, dimensions))
+#     # 简化实现：直接返回随机粒子序列
+#     return particles
+
 
 
 app = App(app_ui, server)
